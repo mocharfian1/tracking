@@ -1,0 +1,41 @@
+image: maven:3.8.4-eclipse-temurin-17-alpine
+
+stages:
+  - build
+  - deploy
+
+variables:
+  PROJECT_ID: "mobileapi-462410"
+  ZONE: "us-central1"
+  CLUSTER_NAME: "mobileapi"
+  GKE_NAMESPACE: "default"
+  GOOGLE_APPLICATION_CREDENTIALS: "/build/.google/credentials.json"
+
+before_script:
+  - apk add --no-cache curl python3 bash coreutils
+  - curl https://sdk.cloud.google.com | bash
+  - source $HOME/google-cloud-sdk/path.bash.inc
+  - mkdir -p /build/.google
+  - echo $GOOGLE_CREDENTIALS > /build/.google/credentials.json
+  - export GOOGLE_APPLICATION_CREDENTIALS=/build/.google/credentials.json
+  - gcloud auth activate-service-account --key-file $GOOGLE_APPLICATION_CREDENTIALS
+  - gcloud config set project $PROJECT_ID
+  - gcloud config set compute/zone $ZONE
+  - gcloud components install gke-gcloud-auth-plugin
+  - curl -LO "https://dl.k8s.io/release/v1.21.3/bin/linux/amd64/kubectl"
+  - chmod +x ./kubectl
+  - mv ./kubectl /usr/local/bin/kubectl
+
+build:
+  stage: build
+  script:
+    - mvn compile jib:build -Dimage=gcr.io/$PROJECT_ID/tracking-number-api
+
+deploy:
+  stage: deploy
+  script:
+    - gcloud container clusters get-credentials $CLUSTER_NAME --zone $ZONE --project $PROJECT_ID
+    - sed "s|IMAGE_PLACEHOLDER|gcr.io/$PROJECT_ID/tracking-number-api|g" tracking-number.yaml | kubectl apply -f -
+    - kubectl rollout restart deployment/tracking-number-api
+  only:
+    - master
